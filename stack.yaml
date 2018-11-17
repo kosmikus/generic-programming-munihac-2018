@@ -1,0 +1,4 @@
+resolver: nightly-2018-11-17
+
+extra-deps:
+  - generics-sop-0.4.0.1
