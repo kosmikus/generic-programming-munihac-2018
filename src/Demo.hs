@@ -19,7 +19,9 @@
 module Demo where
 
 import Data.Kind
+import Data.Proxy
 import Data.Void
+import GHC.TypeLits
 
 data Code =
     Zero
@@ -27,6 +29,8 @@ data Code =
   | Const Type
   | Plus Code Code
   | Times Code Code
+  | Datatype Symbol Code
+  | Constructor Symbol Code
 
 type Rep a = Run (CodeOf a)
 
@@ -37,7 +41,12 @@ class Generic a where
   to :: Rep a -> a
 
 instance Generic Bool where
-  type CodeOf Bool = Plus One One
+  type CodeOf Bool =
+    Datatype "Bool"
+      (Plus
+        (Constructor "False" One)
+        (Constructor "True" One)
+      )
 
   from :: Bool -> Rep Bool
   from False = Left ()
@@ -48,11 +57,15 @@ instance Generic Bool where
   to (Right ()) = True
 
 data List a = Nil | Cons a (List a)
-  deriving Show
-  deriving (MyEnum, Eq) via FromGeneric (List a)
+  deriving (MyEnum, Eq, Show) via FromGeneric (List a)
 
 instance Generic (List a) where
-  type CodeOf (List a) = Plus One (Times (Const a) (Const (List a)))
+  type CodeOf (List a) =
+    Datatype "List"
+      (Plus
+        (Constructor "Nil" One)
+        (Constructor "Cons" (Times (Const a) (Const (List a))))
+      )
 
   from :: List a -> Rep (List a)
   from Nil = Left ()
@@ -72,6 +85,9 @@ instance (Generic a, GEnum (CodeOf a)) => MyEnum (FromGeneric a) where
 
 instance (Generic a, GEq (CodeOf a)) => Eq (FromGeneric a) where
   FromGeneric x1 == FromGeneric x2 = geq @(CodeOf a) (from x1) (from x2)
+
+instance (Generic a, GShow (CodeOf a)) => Show (FromGeneric a) where
+  show (FromGeneric x) = gshow @(CodeOf a) (from x)
 
 deriving via FromGeneric Bool instance MyEnum Bool
 
@@ -100,12 +116,20 @@ instance (GEnum c1, GEnum c2) => GEnum (Times c1 c2) where
 instance MyEnum a => GEnum (Const a) where
   genum = enum
 
+instance GEnum c => GEnum (Datatype n c) where
+  genum = genum @c
+
+instance GEnum c => GEnum (Constructor n c) where
+  genum = genum @c
+
 type family Run (c :: Code) :: Type where
-  Run Zero          = Void
-  Run One           = ()
-  Run (Const a)     = a
-  Run (Plus c1 c2)  = Either (Run c1) (Run c2)
-  Run (Times c1 c2) = (Run c1, Run c2)
+  Run Zero              = Void
+  Run One               = ()
+  Run (Const a)         = a
+  Run (Plus c1 c2)      = Either (Run c1) (Run c2)
+  Run (Times c1 c2)     = (Run c1, Run c2)
+  Run (Datatype _ c)    = Run c
+  Run (Constructor _ c) = Run c
 
 
 
@@ -141,3 +165,36 @@ instance (GEq c1, GEq c2) => GEq (Times c1 c2) where
 
 instance Eq a => (GEq (Const a)) where
   geq x y = x == y
+
+instance GEq c => GEq (Datatype n c) where
+  geq = geq @c
+
+instance GEq c => GEq (Constructor n c) where
+  geq = geq @c
+
+class GShow (c :: Code) where
+  gshow :: Run c -> String
+
+instance GShow Zero where
+  gshow x = absurd x
+
+instance GShow One where
+  gshow () = ""
+
+instance (GShow c1, GShow c2) => GShow (Plus c1 c2) where
+  gshow (Left x) = gshow @c1 x
+  gshow (Right y) = gshow @c2 y
+
+instance (GShow c1, GShow c2) => GShow (Times c1 c2) where
+  gshow (x, y) = gshow @c1 x ++ " " ++ gshow @c2 y
+
+instance Show a => GShow (Const a) where
+  gshow x = "(" ++ show x ++ ")"
+
+instance GShow c => GShow (Datatype n c) where
+  gshow = gshow @c
+
+instance (KnownSymbol n, GShow c) => GShow (Constructor n c) where
+  gshow x = symbolVal (Proxy @n) ++ " " ++ gshow @c x
+
+
